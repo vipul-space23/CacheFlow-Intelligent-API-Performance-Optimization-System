@@ -1,36 +1,49 @@
 const express = require('express');
 const router = express.Router();
-const { fetchProducts, fetchProductById } = require('../utils/mockDB');
-const { cacheMiddleware } = require('../cache/middleware');
+const db = require('../utils/mockDB');
+const { cacheMiddleware, invalidateCache } = require('../cache/middleware');
 
-// GET all products
-// Uses cache middleware
+// GET /api/products?page=1&limit=20&category=Electronics
 router.get('/', cacheMiddleware, async (req, res) => {
     try {
-        const products = await fetchProducts();
-        res.json({
-            success: true,
-            count: products.length,
-            data: products
-        });
+        const { page = 1, limit = 20, category } = req.query;
+        const result = await db.getAllProducts({ page, limit, category });
+        res.json({ success: true, ...result });
     } catch (err) {
-        res.status(500).json({ success: false, message: 'Server Error' });
+        console.error('[Products] GET /:', err.message);
+        res.status(500).json({ success: false, message: 'Failed to fetch products' });
     }
 });
 
-// GET single product
+// GET /api/products/categories
+router.get('/categories', cacheMiddleware, async (req, res) => {
+    try {
+        const categories = await db.getProductCategories();
+        res.json({ success: true, data: categories });
+    } catch (err) {
+        res.status(500).json({ success: false, message: 'Failed to fetch categories' });
+    }
+});
+
+// GET /api/products/:id
 router.get('/:id', cacheMiddleware, async (req, res) => {
     try {
-        const product = await fetchProductById(req.params.id);
-        if (!product) {
-            return res.status(404).json({ success: false, message: 'Product not found' });
-        }
-        res.json({
-            success: true,
-            data: product
-        });
+        const product = await db.getProductById(req.params.id);
+        if (!product) return res.status(404).json({ success: false, message: 'Product not found' });
+        res.json({ success: true, data: product });
     } catch (err) {
-        res.status(500).json({ success: false, message: 'Server Error' });
+        res.status(500).json({ success: false, message: 'Failed to fetch product' });
+    }
+});
+
+// DELETE /api/products/:id/cache — manually invalidate cache for a product
+router.delete('/:id/cache', async (req, res) => {
+    try {
+        await invalidateCache(`/api/products/${req.params.id}`);
+        await invalidateCache('/api/products');
+        res.json({ success: true, message: `Cache cleared for product ${req.params.id}` });
+    } catch (err) {
+        res.status(500).json({ success: false, message: 'Failed to invalidate cache' });
     }
 });
 

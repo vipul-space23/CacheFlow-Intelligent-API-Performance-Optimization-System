@@ -1,118 +1,177 @@
-import React, { useState, useEffect } from 'react';
-import { Activity, Database, Zap, Clock } from 'lucide-react';
-import { 
+import React, { useEffect, useState } from 'react';
+import { Activity, Zap, Database, Clock, AlertCircle } from 'lucide-react';
+import {
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
-  BarChart, Bar, Legend
+  BarChart, Bar,
 } from 'recharts';
-import StatCard from './StatCard';
+import { getMetrics, getTimeSeries, getEndpoints } from '../../api';
 
-const mockData = [
-  { time: '10:00', hits: 120, misses: 30, latency: 45 },
-  { time: '10:05', hits: 180, misses: 25, latency: 40 },
-  { time: '10:10', hits: 250, misses: 40, latency: 42 },
-  { time: '10:15', hits: 310, misses: 20, latency: 38 },
-  { time: '10:20', hits: 400, misses: 15, latency: 35 },
-  { time: '10:25', hits: 480, misses: 10, latency: 30 },
-  { time: '10:30', hits: 550, misses: 5, latency: 28 },
-];
-
-const Dashboard = () => {
+function StatCard({ label, value, sub, iconClass, icon: Icon }) {
   return (
-    <div className="main-content">
-      <div className="header">
-        <h1>Cache Overview</h1>
-        <p>Real-time analytics and performance metrics for CacheFlow.</p>
+    <div className="stat-card">
+      <div className="stat-card-header">
+        <span className="stat-label">{label}</span>
+        <div className={`stat-icon ${iconClass}`}><Icon size={16} /></div>
+      </div>
+      <div className="stat-value">{value}</div>
+      <div className="stat-sub">{sub}</div>
+    </div>
+  );
+}
+
+export default function Dashboard() {
+  const [metrics, setMetrics]   = useState(null);
+  const [series, setSeries]     = useState([]);
+  const [endpoints, setEndpoints] = useState([]);
+  const [error, setError]       = useState(null);
+
+  async function load() {
+    try {
+      const [m, s, e] = await Promise.all([getMetrics(), getTimeSeries(), getEndpoints()]);
+      setMetrics(m.data);
+      setSeries(s.data);
+      setEndpoints(e.data);
+      setError(null);
+    } catch (err) {
+      setError('Cannot reach backend at localhost:5000. Make sure the server is running.');
+    }
+  }
+
+  useEffect(() => {
+    load();
+    const id = setInterval(load, 4000);
+    return () => clearInterval(id);
+  }, []);
+
+  if (error) {
+    return (
+      <div className="main">
+        <div className="page-header"><h1>Dashboard</h1></div>
+        <div className="card" style={{ color: 'var(--red)', display: 'flex', gap: 10, alignItems: 'center' }}>
+          <AlertCircle size={18} /> {error}
+        </div>
+      </div>
+    );
+  }
+
+  const hitRate   = metrics ? metrics.hitRate : 0;
+  const totalReqs = metrics ? metrics.totalRequests : 0;
+  const avgMs     = metrics ? metrics.avgLatencyMs : 0;
+  const cacheMB   = metrics ? metrics.cacheSizeMB : '0.000';
+
+  return (
+    <div className="main">
+      <div className="page-header">
+        <h1>Dashboard</h1>
+        <p>Live cache performance metrics — refreshes every 4 seconds</p>
       </div>
 
-      <div className="stats-grid">
-        <StatCard 
-          title="Total Requests" 
-          value="24.5k" 
-          change={12.5} 
-          isPositive={true} 
-          colorClass="blue" 
-          icon={Activity} 
-        />
-        <StatCard 
-          title="Cache Hit Ratio" 
-          value="94.2%" 
-          change={2.1} 
-          isPositive={true} 
-          colorClass="green" 
-          icon={Zap} 
-        />
-        <StatCard 
-          title="Avg Latency" 
-          value="32ms" 
-          change={15.4} 
-          isPositive={false} 
-          colorClass="purple" 
-          icon={Clock} 
-        />
-        <StatCard 
-          title="Cache Size" 
-          value="1.2 GB" 
-          change={5.2} 
-          isPositive={true} 
-          colorClass="red" 
-          icon={Database} 
-        />
+      {/* Stat Cards */}
+      <div className="stat-grid">
+        <StatCard label="Total Requests"   value={totalReqs.toLocaleString()} sub={`L1: ${metrics?.l1Hits ?? 0}  ·  L2: ${metrics?.l2Hits ?? 0}  ·  Miss: ${metrics?.misses ?? 0}`} iconClass="blue"  icon={Activity} />
+        <StatCard label="Cache Hit Rate"   value={`${hitRate}%`}              sub={`Avg cached: ${metrics?.avgCachedLatencyMs ?? 0}ms`}   iconClass="green" icon={Zap}      />
+        <StatCard label="Avg Latency"      value={`${avgMs}ms`}               sub={`Uncached: ${metrics?.avgUncachedLatencyMs ?? 0}ms`}   iconClass="amber" icon={Clock}    />
+        <StatCard label="Cache Memory"     value={`${cacheMB} MB`}            sub={`${metrics?.cacheSize ?? 0} / ${metrics?.cacheCapacity ?? 200} entries`} iconClass="purple" icon={Database} />
       </div>
 
-      <div className="charts-grid">
-        <div className="chart-card">
-          <div className="chart-header">
-            <h2 className="chart-title">Hits vs Misses (Last 30 Mins)</h2>
+      {/* Charts */}
+      <div className="chart-grid">
+        {/* Area chart: hits vs misses over time */}
+        <div className="card">
+          <div className="card-header">
+            <span className="card-title">Cache Hits vs Misses</span>
+            <span className="card-sub">{series.length} data points</span>
           </div>
-          <div style={{ width: '100%', height: 300 }}>
-            <ResponsiveContainer>
-              <AreaChart data={mockData} margin={{ top: 10, right: 30, left: 0, bottom: 0 }}>
+          {series.length === 0 ? (
+            <div className="empty">Make some API requests to generate data…</div>
+          ) : (
+            <ResponsiveContainer width="100%" height={240}>
+              <AreaChart data={series} margin={{ top: 4, right: 4, left: -20, bottom: 0 }}>
                 <defs>
-                  <linearGradient id="colorHits" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="#10b981" stopOpacity={0.3}/>
-                    <stop offset="95%" stopColor="#10b981" stopOpacity={0}/>
+                  <linearGradient id="gHits" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%" stopColor="#10b981" stopOpacity={0.18} />
+                    <stop offset="95%" stopColor="#10b981" stopOpacity={0} />
                   </linearGradient>
-                  <linearGradient id="colorMisses" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="#ef4444" stopOpacity={0.3}/>
-                    <stop offset="95%" stopColor="#ef4444" stopOpacity={0}/>
+                  <linearGradient id="gMiss" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%" stopColor="#ef4444" stopOpacity={0.18} />
+                    <stop offset="95%" stopColor="#ef4444" stopOpacity={0} />
                   </linearGradient>
                 </defs>
-                <XAxis dataKey="time" stroke="#94a3b8" />
-                <YAxis stroke="#94a3b8" />
-                <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" vertical={false} />
-                <Tooltip 
-                  contentStyle={{ backgroundColor: '#131b2c', borderColor: '#1e293b', borderRadius: '8px' }}
-                  itemStyle={{ color: '#f8fafc' }}
-                />
-                <Area type="monotone" dataKey="hits" stroke="#10b981" fillOpacity={1} fill="url(#colorHits)" />
-                <Area type="monotone" dataKey="misses" stroke="#ef4444" fillOpacity={1} fill="url(#colorMisses)" />
+                <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" vertical={false} />
+                <XAxis dataKey="time" tick={{ fontSize: 11, fill: '#94a3b8' }} />
+                <YAxis tick={{ fontSize: 11, fill: '#94a3b8' }} />
+                <Tooltip contentStyle={{ borderRadius: 8, fontSize: 12, border: '1px solid #e2e8f0' }} />
+                <Area type="monotone" dataKey="hits"   stroke="#10b981" fill="url(#gHits)" strokeWidth={2} name="Hits"   />
+                <Area type="monotone" dataKey="misses" stroke="#ef4444" fill="url(#gMiss)" strokeWidth={2} name="Misses" />
               </AreaChart>
             </ResponsiveContainer>
-          </div>
+          )}
         </div>
 
-        <div className="chart-card">
-          <div className="chart-header">
-            <h2 className="chart-title">API Latency (ms)</h2>
+        {/* Bar chart: avg latency */}
+        <div className="card">
+          <div className="card-header">
+            <span className="card-title">Avg Latency (ms)</span>
           </div>
-          <div style={{ width: '100%', height: 300 }}>
-            <ResponsiveContainer>
-              <BarChart data={mockData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" vertical={false} />
-                <XAxis dataKey="time" stroke="#94a3b8" />
-                <YAxis stroke="#94a3b8" />
-                <Tooltip 
-                  cursor={{ fill: 'rgba(255,255,255,0.05)' }}
-                  contentStyle={{ backgroundColor: '#131b2c', borderColor: '#1e293b', borderRadius: '8px' }}
-                />
-                <Bar dataKey="latency" fill="#3b82f6" radius={[4, 4, 0, 0]} />
+          {series.length === 0 ? (
+            <div className="empty">No data yet</div>
+          ) : (
+            <ResponsiveContainer width="100%" height={240}>
+              <BarChart data={series} margin={{ top: 4, right: 4, left: -20, bottom: 0 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" vertical={false} />
+                <XAxis dataKey="time" tick={{ fontSize: 11, fill: '#94a3b8' }} />
+                <YAxis tick={{ fontSize: 11, fill: '#94a3b8' }} />
+                <Tooltip contentStyle={{ borderRadius: 8, fontSize: 12, border: '1px solid #e2e8f0' }} />
+                <Bar dataKey="avgLatency" name="Avg ms" fill="#3b82f6" radius={[4, 4, 0, 0]} />
               </BarChart>
             </ResponsiveContainer>
-          </div>
+          )}
         </div>
+      </div>
+
+      {/* Top Endpoints Table */}
+      <div className="card">
+        <div className="card-header">
+          <span className="card-title">Top Endpoints</span>
+        </div>
+        {endpoints.length === 0 ? (
+          <div className="empty">No endpoint traffic yet — hit some APIs to see stats</div>
+        ) : (
+          <div className="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Endpoint</th>
+                  <th>Requests</th>
+                  <th>Hits</th>
+                  <th>Misses</th>
+                  <th>Hit Rate</th>
+                  <th>Avg Latency</th>
+                </tr>
+              </thead>
+              <tbody>
+                {endpoints.map(ep => (
+                  <tr key={ep.path}>
+                    <td className="font-mono">{ep.path}</td>
+                    <td>{ep.requests}</td>
+                    <td style={{ color: 'var(--green)', fontWeight: 600 }}>{ep.hits}</td>
+                    <td style={{ color: 'var(--red)', fontWeight: 600 }}>{ep.misses}</td>
+                    <td>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        <div className="progress-bar" style={{ width: 60 }}>
+                          <div className="progress-fill" style={{ width: `${ep.hitRate}%`, background: ep.hitRate > 70 ? 'var(--green)' : ep.hitRate > 40 ? 'var(--amber)' : 'var(--red)' }} />
+                        </div>
+                        {ep.hitRate}%
+                      </div>
+                    </td>
+                    <td>{ep.avgLatencyMs}ms</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
       </div>
     </div>
   );
-};
-
-export default Dashboard;
+}
